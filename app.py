@@ -9,6 +9,7 @@ from langchain.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -67,7 +68,7 @@ def get_vector_store(chunks):
 
 
 # Function to get conversational chain
-def get_conversational_chain():
+async def get_conversational_chain():
     prompt_template = """
     Answer the question as detailed as possible from the provided context, make sure to provide all the details, if the answer is not in
     provided context just say, "answer is not available in the context", don't provide the wrong answer\n\n
@@ -88,7 +89,7 @@ def get_conversational_chain():
 
 
 # Function to handle user input for PDF chat
-def pdf_user_input(user_question):
+async def pdf_user_input(user_question):
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001")  # type: ignore
 
@@ -96,7 +97,7 @@ def pdf_user_input(user_question):
         "faiss_index", embeddings, allow_dangerous_deserialization=True)
     docs = new_db.similarity_search(user_question)
 
-    chain = get_conversational_chain()
+    chain = await get_conversational_chain()
 
     response = chain(
         {"input_documents": docs, "question": user_question}, return_only_outputs=True, )
@@ -122,8 +123,8 @@ def main():
         st.title("Chat with PDF Files")
         with st.expander("Upload PDF Files"):
             pdf_docs = st.file_uploader(
-                "Upload your PDF Files and Click on the Submit & Process Button", accept_multiple_files=True)
-            if st.button("Submit & Process"):
+                "Upload your PDF Files and Click on the Submit &amp; Process Button", accept_multiple_files=True)
+            if st.button("Submit &amp; Process"):
                 with st.spinner("Processing..."):
                     raw_text = get_pdf_text(pdf_docs)
                     text_chunks = get_text_chunks(raw_text)
@@ -155,7 +156,7 @@ def main():
         if st.session_state.messages[-1]["role"] != "assistant":
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
-                    response = pdf_user_input(prompt)
+                    response = asyncio.run(pdf_user_input(prompt))
                     full_response = ''
                     for item in response['output_text']:
                         full_response += item
