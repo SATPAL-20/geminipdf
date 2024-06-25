@@ -5,28 +5,21 @@ import google.generativeai as gen_ai
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS  # Updated import statement
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
 import asyncio
+from youtube_transcript_api import YouTubeTranscriptApi
+import re
 
 # Load environment variables
 load_dotenv()
 
-# Configure Streamlit page settings
-st.set_page_config(
-    page_title="Chat with EDUBOT!",
-    page_icon=":brain:",  # Favicon emoji
-    layout="wide"  # Page layout option
-)
-
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
 # Set up Google Gemini-Pro AI model
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 gen_ai.configure(api_key=GOOGLE_API_KEY)
 model = gen_ai.GenerativeModel('gemini-pro')
-
 
 # Function to translate roles between Gemini-Pro and Streamlit terminology
 def translate_role_for_streamlit(user_role):
@@ -35,11 +28,13 @@ def translate_role_for_streamlit(user_role):
     else:
         return user_role
 
-
 # Function to clear chat history
 def clear_chat_history():
     session_state.chat_session = model.start_chat(history=[])
-
+    st.session_state.chat_session = session_state.chat_session
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Chat history cleared. Ask me a question."}
+    ]
 
 # Function to read all PDF files and return text
 def get_pdf_text(pdf_docs):
@@ -50,7 +45,6 @@ def get_pdf_text(pdf_docs):
             text += page.extract_text()
     return text
 
-
 # Function to split text into chunks
 def get_text_chunks(text):
     splitter = RecursiveCharacterTextSplitter(
@@ -58,14 +52,12 @@ def get_text_chunks(text):
     chunks = splitter.split_text(text)
     return chunks  # list of strings
 
-
 # Function to get embeddings for each chunk
 def get_vector_store(chunks):
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001")  # type: ignore
     vector_store = FAISS.from_texts(chunks, embedding=embeddings)
     vector_store.save_local("faiss_index")
-
 
 # Function to get conversational chain
 async def get_conversational_chain():
@@ -87,7 +79,6 @@ async def get_conversational_chain():
     chain = load_qa_chain(llm=model, chain_type="stuff", prompt=prompt)
     return chain
 
-
 # Function to handle user input for PDF chat
 async def pdf_user_input(user_question):
     embeddings = GoogleGenerativeAIEmbeddings(
@@ -104,36 +95,145 @@ async def pdf_user_input(user_question):
 
     return response
 
+# Function to summarize text
+async def summarize_text(input_text):
+    chain = await get_conversational_chain()
+
+    summary_prompt = f"Summarize the following text:\n\n{input_text}\n\nSummary:"
+    response = chain(
+        {"input_documents": [], "question": summary_prompt}, return_only_outputs=True, )
+
+    return response['output_text']
+
+# Function to extract video ID from YouTube URL
+def get_video_id(url):
+    video_id = None
+    # Regular expression patterns for different YouTube URL formats
+    patterns = [
+        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&]+)',  # https://www.youtube.com/watch?v=VIDEO_ID
+        r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^?]+)',  # https://youtu.be/VIDEO_ID
+        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^?]+)',  # https://www.youtube.com/embed/VIDEO_ID
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            video_id = match.group(1)
+            break
+    return video_id
+
+# Function to get transcript from YouTube video
+def get_youtube_transcript(video_url):
+    try:
+        video_id = get_video_id(video_url)
+        if not video_id:
+            st.error("Invalid YouTube URL")
+            return None
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript = " ".join([d['text'] for d in transcript_list])
+        return transcript
+    except Exception as e:
+        st.error(f"Error retrieving transcript: {e}")
+        return None
 
 # Initialize chat session
 class SessionState:
     def __init__(self):
         self.chat_session = None
 
-
 session_state = SessionState()
+
+# Configure Streamlit page settings
+st.set_page_config(
+    page_title="Chat with EDUBOT!",
+    page_icon=":brain:",  # Favicon emoji
+    layout="wide",  # Page layout option
+    initial_sidebar_state="expanded",
+)
+
+# CSS to hide Streamlit footer and customize styles
+st.markdown("""
+    <style>
+        .css-18e3th9 {
+            padding: 2rem 1rem;
+        }
+        .css-1d391kg {
+            padding: 2rem 1rem;
+        }
+        .reportview-container .main footer {visibility: hidden;}
+        .reportview-container .main .block-container {padding-top: 2rem;}
+        .st-chat-message .css-1lhpgda {color: black;}
+    </style>
+""", unsafe_allow_html=True)
+
+# Apply dark mode based on a condition (e.g., time of day, user preference stored in a database, etc.)
+# For this example, we'll use a simple flag to toggle dark mode.
+dark_mode = True  # Change this to False to disable dark mode
+
+if dark_mode:
+    st.markdown(
+        """
+        <style>
+            .reportview-container {
+                background: #1a1a1a;
+                color: white;
+            }
+            .sidebar .sidebar-content {
+                background: #1a1a1a;
+                color: white;
+            }
+            .css-18e3th9, .css-1d391kg {
+                background: #1a1a1a;
+                color: white;
+            }
+            .st-chat-message .css-1lhpgda {color: white;}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        """
+        <style>
+            .reportview-container {
+                background: white;
+                color: black;
+            }
+            .sidebar .sidebar-content {
+                background: white;
+                color: black;
+            }
+            .css-18e3th9, .css-1d391kg {
+                background: white;
+                color: black;
+            }
+            .st-chat-message .css-1lhpgda {color: black;}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 # Main page
 def main():
-    st.title("Chat with EDUBOT")
     st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ("Chat with PDF Files", "Chat with EDUBOT"))
+    page = st.sidebar.radio("Go to", ("Chat with PDF Files", "Chat with EDUBOT", "Text Summarizer", "YouTube Video Summarizer"))
+
+    st.title("Chat with EDUBOT")
+
+    st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
 
     if page == "Chat with PDF Files":
         st.title("Chat with PDF Files")
         with st.expander("Upload PDF Files"):
             pdf_docs = st.file_uploader(
-                "Upload your PDF Files and Click on the Submit &amp; Process Button", accept_multiple_files=True)
-            if st.button("Submit &amp; Process"):
+                "Upload your PDF Files and Click on the Submit & Process Button", accept_multiple_files=True)
+            if st.button("Submit & Process"):
                 with st.spinner("Processing..."):
                     raw_text = get_pdf_text(pdf_docs)
                     text_chunks = get_text_chunks(raw_text)
                     get_vector_store(text_chunks)
                     st.success("Done")
 
-        st.title("Chat with PDF Files")
         st.write("Welcome to the chat!")
-        st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
 
         if session_state.chat_session is None:
             session_state.chat_session = model.start_chat(history=[])
@@ -165,9 +265,36 @@ def main():
                 message = {"role": "assistant", "content": full_response}
                 st.session_state.messages.append(message)
 
+    elif page == "Text Summarizer":
+        st.title("Text Summarizer")
+        input_text = st.text_area("Enter the text you want to summarize:")
+
+        if st.button("Summarize Text"):
+            with st.spinner("Summarizing..."):
+                summary = asyncio.run(summarize_text(input_text))
+                st.write("Summary:")
+                st.write(summary)
+
+    elif page == "YouTube Video Summarizer":
+        st.title("YouTube Video Summarizer")
+        video_url = st.text_input("Enter YouTube Video URL:")
+
+        if st.button("Get Transcript and Summarize"):
+            with st.spinner("Retrieving transcript..."):
+                transcript = get_youtube_transcript(video_url)
+                if transcript:
+                    with st.spinner("Summarizing transcript..."):
+                        summary = asyncio.run(summarize_text(transcript))
+                        st.write("Summary:")
+                        st.write(summary)
+
     else:
         st.title("🤖 EDUBOT - ChatBot")
         # Display the chat history
+        if session_state.chat_session is None:
+            session_state.chat_session = model.start_chat(history=[])
+            st.session_state.chat_session = session_state.chat_session
+
         for message in st.session_state.chat_session.history:
             with st.chat_message(translate_role_for_streamlit(message.role)):
                 st.markdown(message.parts[0].text)
@@ -185,7 +312,6 @@ def main():
             # Display Gemini-Pro's response
             with st.chat_message("assistant"):
                 st.markdown(gemini_response.text)
-
 
 if __name__ == "__main__":
     main()
